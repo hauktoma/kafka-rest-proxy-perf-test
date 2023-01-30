@@ -9,11 +9,11 @@ Content-Type: application/json
 
 {
   "type": "KAFKA_REST_PROXY",
-  "minIntervalMs": 500,
-  "maxIntervalMs": 1501,
-  "minMessagePayloadSizeBytes": 200000,
-  "maxMessagePayloadSizeBytes": 200001,
-  "parallelProducers": 1,
+  "minIntervalMs": 100,
+  "maxIntervalMs": 100,
+  "minMessagePayloadSizeBytes": 180000,
+  "maxMessagePayloadSizeBytes": 180000,
+  "parallelProducers": 4,
   "gatherLatencies": true,
   "kafkaRestUri": "{{kafka-rest-uri}}",
   "kafkaUserName": "{{kafka-user-name}}",
@@ -22,10 +22,10 @@ Content-Type: application/json
   "valueSchemaId": "7",
   "kafkaConsumerGroup": "consumer-group-{{$uuid}}",
   "kafkaConsumerId": "consumer-{{$uuid}}",
-  "minMessagesPerBatch": 1,
-  "maxMessagesPerBatch": 2,
-  "consumeTimeoutMs": 5000,
-  "consumeMaxBytesMs": 10000,
+  "minMessagesPerBatch": 4,
+  "maxMessagesPerBatch": 4,
+  "consumeTimeoutMs": 10,
+  "consumeMaxBytesMs": 5000000,
   "commitInterval": "PT10S"
 }
 

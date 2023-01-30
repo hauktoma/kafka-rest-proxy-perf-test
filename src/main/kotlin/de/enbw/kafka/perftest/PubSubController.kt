@@ -34,11 +34,11 @@ class PubSubController(
     ): Mono<PublishSubscribeConfDto> = Mono.fromCallable {
         log.info("Acquired request to start pub-sub task with configuration: $newConfiguration")
 
-        if (newConfiguration.minIntervalMs >= newConfiguration.maxIntervalMs)
+        if (newConfiguration.minIntervalMs > newConfiguration.maxIntervalMs)
             throw IllegalArgumentException("Invalid minIntervalMs or maxIntervalMs")
-        if (newConfiguration.minMessagesPerBatch >= newConfiguration.maxMessagesPerBatch)
+        if (newConfiguration.minMessagesPerBatch > newConfiguration.maxMessagesPerBatch)
             throw IllegalArgumentException("Invalid minMessagesPerBatch or maxMessagesPerBatch")
-        if (newConfiguration.minMessagePayloadSizeBytes >= newConfiguration.maxMessagePayloadSizeBytes)
+        if (newConfiguration.minMessagePayloadSizeBytes > newConfiguration.maxMessagePayloadSizeBytes)
             throw IllegalArgumentException("Invalid minMessagePayloadSizeBytes or maxMessagePayloadSizeBytes")
 
         when (val maybeRunningTask = task) {
@@ -78,7 +78,6 @@ class PubSubController(
 
         else -> {
             log.info("Initiated kill process...")
-            taskToKill.stats.taskKillTime = Instant.now()
             taskToKill.close()
             val stats: PubSubStatsDto = taskToKill.stats
             task = null

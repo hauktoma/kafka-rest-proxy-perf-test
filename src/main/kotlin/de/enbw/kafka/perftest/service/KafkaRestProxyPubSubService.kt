@@ -18,7 +18,6 @@ import java.time.Instant
 import java.util.*
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
-import kotlin.random.Random
 
 private val log by logger {}
 
@@ -134,7 +133,7 @@ class KafkaRestProxyPubSubService(
                     if (response.statusCode() != HttpStatus.OK) log.warn("Status Error: ${response.statusCode()}")
                     require(response.statusCode() == HttpStatus.OK)
                     getResponseParser()(response)
-                        .doOnNext { eventWrapper -> doComputeStats(eventWrapper, newConfiguration) }
+                        .doOnNext { eventWrapper -> doComputeRecordBatchStats(eventWrapper, newConfiguration) }
                         .doOnNext { log.info("[CONSUMER] Consumed message: $it") }
                         .map { }
                 }
@@ -149,7 +148,7 @@ class KafkaRestProxyPubSubService(
         1
     )
 
-    private fun doComputeStats(
+    private fun doComputeRecordBatchStats(
         eventWrapper: List<AvroRecordOutDTO<Map<Any, Any>>>,
         newConfiguration: PublishSubscribeConfDto
     ) {
@@ -179,7 +178,8 @@ class KafkaRestProxyPubSubService(
         null -> doCommitCursors(createConsumerResponse, newConfiguration)
         // commit interval set, do async commit and return immediately
         else -> when {
-            task!!.lastCommitAt == null || Duration.between(task!!.lastCommitAt, Instant.now()).abs() > commitInterval -> Mono
+            task!!.lastCommitAt == null || Duration.between(task!!.lastCommitAt, Instant.now())
+                .abs() > commitInterval -> Mono
                 .fromCallable {
                     val now = Instant.now()
                     log.info("Setting last commit to $now")
@@ -189,9 +189,10 @@ class KafkaRestProxyPubSubService(
                 // fire-and-forget subscribe
                 .subscribe(
                     { log.info("Commit ok...") },
-                    { log.error("Failed to commit cursors.", it )}
+                    { log.error("Failed to commit cursors.", it) }
                 )
                 .let { Mono.just(Unit) }
+
             else -> Mono.just(Unit) // just return without commit
         }
     }
@@ -244,20 +245,22 @@ class KafkaRestProxyPubSubService(
         orderNumber: String
     ): Mono<Tuple2<HttpStatus, Unit>> = Mono.just(Unit).delayUntil {
         Mono.delay(
-            Duration.ofMillis(Random.nextLong(newConfiguration.minIntervalMs, newConfiguration.maxIntervalMs))
+            Duration.ofMillis(generateRandom(newConfiguration.minIntervalMs, newConfiguration.maxIntervalMs).toLong())
         )
     }.map {
+        val maxMessages = generateRandom(newConfiguration.minMessagesPerBatch, newConfiguration.maxMessagesPerBatch)
+
         ProduceMessagesInDTO(
             keySchema = null,
             keySchemaId = null,
             valueSchema = null,
             valueSchemaId = "7",
-            records = (newConfiguration.minMessagesPerBatch until newConfiguration.maxMessagesPerBatch).map {
+            records = (1 .. maxMessages).map {
                 KeyValuePair(
                     key = null,
                     value = AvroRecordDTO(
                         value = PayloadGenerator.generateStringPayload(
-                            Random.nextInt(
+                            generateRandom(
                                 newConfiguration.minMessagePayloadSizeBytes,
                                 newConfiguration.maxMessagePayloadSizeBytes
                             )
@@ -299,7 +302,7 @@ class KafkaRestProxyPubSubService(
                         log.info("=== Order sending result: id=${message.records.first().value.metadata.eventId}, httpStatus=${response.statusCode()} in $latencyMs ===")
                         if (task?.stats?.publishStats == true) {
                             task?.stats?.apply {
-                                producedMessages.incrementAndGet()
+                                producedMessages.addAndGet(message.records.size)
                                 if (newConfiguration.gatherLatencies) latenciesProduce.add(latencyMs)
                             }
                         }

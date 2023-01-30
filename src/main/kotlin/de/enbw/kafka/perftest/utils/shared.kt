@@ -19,6 +19,7 @@ import java.time.Instant
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.ceil
+import kotlin.random.Random
 
 private val log by logger {}
 
@@ -59,6 +60,17 @@ fun <T> profile(block: () -> T): Pair<Duration, T> {
     return Duration.between(start, end) to result
 }
 
+/**
+ * Generates random number. Allows to use equal values for 'from' and 'to' (Kotlin does not allow this).
+ */
+fun generateRandom(from: Int, to: Int): Int {
+    require(from <= to) { "The 'from' must be lower/equal to 'to'." }
+    return when {
+        from == to -> from
+        else -> Random.nextInt(from, to)
+    }
+}
+
 object PayloadGenerator {
 
     fun generateStringPayload(
@@ -86,12 +98,12 @@ data class PublishSubscribeConfDto(
     /**
      * Minimal delay between produce batches.
      */
-    val minIntervalMs: Long,
+    val minIntervalMs: Int,
 
     /**
-     * Max interval between produce batches. Must be higher than [minIntervalMs].
+     * Max interval between produce batches.
      */
-    val maxIntervalMs: Long,
+    val maxIntervalMs: Int,
 
     /**
      * Min message size.
@@ -99,7 +111,7 @@ data class PublishSubscribeConfDto(
     val minMessagePayloadSizeBytes: Int,
 
     /**
-     * Max message size. Must be higher than [minMessagePayloadSizeBytes].
+     * Max message size.
      */
     val maxMessagePayloadSizeBytes: Int,
 
@@ -145,7 +157,7 @@ data class PublishSubscribeConfDto(
     val minMessagesPerBatch: Int,
 
     /**
-     * Max messages per batch. Must be higher than [minMessagesPerBatch].
+     * Max messages per batch.
      */
     val maxMessagesPerBatch: Int,
 
@@ -177,6 +189,7 @@ data class PubSubStatsDto(
     val producedMessages: AtomicInteger,
     val failedMessages: AtomicInteger = AtomicInteger(0),
     val consumedMessages: AtomicInteger,
+    @Volatile
     var publishStats: Boolean = true,
     var taskStartTime: Instant? = null,
     var taskKillTime: Instant? = null
@@ -213,6 +226,9 @@ data class PubSubTaskAndConf(
 
     @Throws(IllegalStateException::class)
     override fun close() {
+        stats.taskKillTime = Instant.now()
+        stats.publishStats = false // stop gathering new stats
+
         log.info("Going to kill producer job...")
         tryKillRunningTaskOrException(producerJob)
         log.info("Killed producer job...")
@@ -220,8 +236,6 @@ data class PubSubTaskAndConf(
         val numberOfAttempts: Long = (timeBuffer / delay)
 
         log.info("Going to kill consumer job... Time buffer to consume leftover message: $timeBuffer")
-
-        stats.publishStats = false
 
         val attemptToConsumeLeftoverMessages: Long? = (0..numberOfAttempts).firstNotNullOfOrNull { attempt ->
             kotlin.runCatching {

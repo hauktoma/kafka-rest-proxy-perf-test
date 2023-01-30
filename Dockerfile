@@ -1,5 +1,5 @@
 FROM openjdk:16-jdk-alpine
-COPY build/libs/ns-service-server.jar app.jar
+COPY build/libs/KafkaRestProxyPerfTests.jar app.jar
 
 EXPOSE 8080
 EXPOSE 5006

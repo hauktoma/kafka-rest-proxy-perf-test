@@ -27,6 +27,24 @@ enum class PubSubType {
     KAFKA_REST_PROXY
 }
 
+enum class ExecutionMode {
+
+    /**
+     * Will make the instance of application run only a single consumer without producers.
+     */
+    CONSUMER,
+
+    /**
+     * Will run only producers without any consumer.
+     */
+    PRODUCERS,
+
+    /**
+     * Will run both consumer and producers in single instance of application.
+     */
+    CONSUMER_AND_PRODUCERS
+}
+
 
 data class OrderMetadataDto(
     @JsonProperty("eid")
@@ -91,6 +109,12 @@ object PayloadGenerator {
 data class PublishSubscribeConfDto(
 
     /**
+     * Determines whether to run consumer, producers or both.
+     * Useful for distributed run execution.
+     */
+    val mode: ExecutionMode,
+
+    /**
      * Allows extending this to other APIs.
      */
     val type: PubSubType,
@@ -98,12 +122,12 @@ data class PublishSubscribeConfDto(
     /**
      * Minimal delay between produce batches.
      */
-    val minIntervalMs: Int,
+    val minBatchIntervalMs: Int,
 
     /**
      * Max interval between produce batches.
      */
-    val maxIntervalMs: Int,
+    val maxBatchIntervalMs: Int,
 
     /**
      * Min message size.

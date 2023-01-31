@@ -31,8 +31,16 @@ class KafkaRestProxyPubSubService(
         newConfiguration: PublishSubscribeConfDto
     ): PubSubTaskAndConf = PubSubTaskAndConf(
         conf = newConfiguration,
-        consumerJob = createConsumerBlock(newConfiguration),
-        producerJob = createParallelProducersBlock(newConfiguration),
+        consumerJob = when (val mode = newConfiguration.mode) {
+            ExecutionMode.CONSUMER, ExecutionMode.CONSUMER_AND_PRODUCERS -> createConsumerBlock(newConfiguration)
+            ExecutionMode.PRODUCERS -> Mono.just(Unit).subscribe { log.warn("Will not spin consumer for mode $mode") }
+        },
+        producerJob = when (val mode = newConfiguration.mode) {
+            ExecutionMode.PRODUCERS,
+            ExecutionMode.CONSUMER_AND_PRODUCERS -> createParallelProducersBlock(newConfiguration)
+
+            ExecutionMode.CONSUMER -> Mono.just(Unit).subscribe { log.warn("Will not spin producer for mode $mode") }
+        },
         stats = PubSubStatsDto(
             latenciesWholeTrip = ConcurrentLinkedQueue<Long>(),
             latenciesProduce = ConcurrentLinkedQueue<Long>(),
@@ -231,23 +239,24 @@ class KafkaRestProxyPubSubService(
     ): Disposable = Flux.generate<String> { sink ->
         sink.next(UUID.randomUUID().toString())
     }.flatMap(
-        { batchId -> produceMessage(newConfiguration, batchId) },
+        { batchId -> produceBatch(newConfiguration, batchId) },
         newConfiguration.parallelProducers
-    ).delaySubscription(
-        Duration.ofMillis(5_000)
     ).subscribe(
         { log.debug("[PRODUCER] Message $it send to Kafka...") },
         { ex -> log.error("[PRODUCER] Failed to send message to Kafka.", ex) }
     )
 
-    private fun produceMessage(
+    private fun produceBatch(
         newConfiguration: PublishSubscribeConfDto,
         orderNumber: String
-    ): Mono<Tuple2<HttpStatus, Unit>> = Mono.just(Unit).delayUntil {
-        Mono.delay(
-            Duration.ofMillis(generateRandom(newConfiguration.minIntervalMs, newConfiguration.maxIntervalMs).toLong())
+    ): Mono<Tuple2<HttpStatus, Unit>> = Mono.delay(
+        Duration.ofMillis(
+            generateRandom(
+                newConfiguration.minBatchIntervalMs,
+                newConfiguration.maxBatchIntervalMs
+            ).toLong()
         )
-    }.map {
+    ).map {
         val maxMessages = generateRandom(newConfiguration.minMessagesPerBatch, newConfiguration.maxMessagesPerBatch)
 
         ProduceMessagesInDTO(
@@ -255,7 +264,7 @@ class KafkaRestProxyPubSubService(
             keySchemaId = null,
             valueSchema = null,
             valueSchemaId = "7",
-            records = (1 .. maxMessages).map {
+            records = (1..maxMessages).map {
                 KeyValuePair(
                     key = null,
                     value = AvroRecordDTO(

@@ -25,6 +25,9 @@ dependencies {
     testImplementation("org.amshove.kluent:kluent:1.68")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("io.projectreactor:reactor-test")
+
+    // experimental support for kotlin scripts
+    implementation(kotlin("script-runtime"))
 }
 
 tasks.withType<KotlinCompile> {

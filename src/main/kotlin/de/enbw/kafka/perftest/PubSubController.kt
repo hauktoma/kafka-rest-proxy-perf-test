@@ -34,8 +34,8 @@ class PubSubController(
     ): Mono<PublishSubscribeConfDto> = Mono.fromCallable {
         log.info("Acquired request to start pub-sub task with configuration: $newConfiguration")
 
-        if (newConfiguration.minIntervalMs > newConfiguration.maxIntervalMs)
-            throw IllegalArgumentException("Invalid minIntervalMs or maxIntervalMs")
+        if (newConfiguration.minBatchIntervalMs > newConfiguration.maxBatchIntervalMs)
+            throw IllegalArgumentException("Invalid minBatchIntervalMs or maxBatchIntervalMs")
         if (newConfiguration.minMessagesPerBatch > newConfiguration.maxMessagesPerBatch)
             throw IllegalArgumentException("Invalid minMessagesPerBatch or maxMessagesPerBatch")
         if (newConfiguration.minMessagePayloadSizeBytes > newConfiguration.maxMessagePayloadSizeBytes)
@@ -53,8 +53,6 @@ class PubSubController(
             PubSubType.KAFKA_REST_PROXY -> kafkaRestProxyService.doStartPubSub(newConfiguration)
         }
 
-        require(!newTask.producerJob.isDisposed) { "Started producer job but it is already disposed of..." }
-        require(!newTask.consumerJob.isDisposed) { "Started consumer job but it is already disposed of..." }
         task = newTask
         task?.stats?.taskStartTime = Instant.now()
         newConfiguration

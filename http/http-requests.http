@@ -8,9 +8,10 @@ Accept: application/json
 Content-Type: application/json
 
 {
+  "mode": "CONSUMER_AND_PRODUCERS",
   "type": "KAFKA_REST_PROXY",
-  "minIntervalMs": 100,
-  "maxIntervalMs": 100,
+  "minBatchIntervalMs": 100,
+  "maxBatchIntervalMs": 100,
   "minMessagePayloadSizeBytes": 180000,
   "maxMessagePayloadSizeBytes": 180000,
   "parallelProducers": 4,

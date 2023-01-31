@@ -25,29 +25,35 @@ fun main(args: Array<String>) {
 class PerfTestConfigurationBeans {
 
     @Bean
-    fun createWebClient() = HttpClient
-        .create()
-//        .withWiretap()
-        .let { nettyClient ->
-            WebClient.builder()
-                .clientConnector(ReactorClientHttpConnector(nettyClient))
-                .exchangeStrategies(
-                    ExchangeStrategies.builder()
-                        .codecs { configurer: ClientCodecConfigurer ->
-                            configurer.defaultCodecs()
-                                .maxInMemorySize(36000000)
-                        }
-                        .build())
-                .build()
-        }
+    fun createWebClient(): WebClient = doCreateWebClient(withWiretap = false)
 
-    /**
-     * If enabled, will print HTTP traffic (request, response) to HTTP logs.
-     */
-    @Suppress("unused") // enabled on demand
-    private fun HttpClient.withWiretap(): HttpClient = this.wiretap(
-        "reactor.netty.http.client.HttpClient",
-        LogLevel.ERROR,
-        AdvancedByteBufFormat.TEXTUAL
-    )
+    companion object {
+        fun doCreateWebClient(
+            withWiretap: Boolean = false
+        ): WebClient = HttpClient
+            .create()
+            .let { if (withWiretap) it.withWiretap() else it }
+            .let { nettyClient ->
+                WebClient.builder()
+                    .clientConnector(ReactorClientHttpConnector(nettyClient))
+                    .exchangeStrategies(
+                        ExchangeStrategies.builder()
+                            .codecs { configurer: ClientCodecConfigurer ->
+                                configurer.defaultCodecs()
+                                    .maxInMemorySize(36000000)
+                            }
+                            .build())
+                    .build()
+            }
+
+        /**
+         * If enabled, will print HTTP traffic (request, response) to HTTP logs.
+         */
+        @Suppress("unused") // enabled on demand
+        private fun HttpClient.withWiretap(): HttpClient = this.wiretap(
+            "reactor.netty.http.client.HttpClient",
+            LogLevel.ERROR,
+            AdvancedByteBufFormat.TEXTUAL
+        )
+    }
 }

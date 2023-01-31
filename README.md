@@ -1,6 +1,12 @@
-# Kafka perf tests
+# Kafka REST Proxy perf tests
 
 Helper project to measure performance of Kafka producer-consumer setup using the REST Proxy API of Kafka.
+This tests sets up single consumer and multiple producers and tries to measure duration the whole round-trip
+of produced message.
+
+Distributed mode also supported to overcome the network limitations of e.g. AWS Fargate containers.
+
+See outline at the end of document for more info about the method.
 
 ## Build 
 
@@ -11,7 +17,7 @@ docker tag kafka-perf-tests:latest DOCKER_REPO/kafka-perf-tests:latest
 docker push DOCKER_REPO/kafka-perf-tests:latest
 ```
 
-## Usage
+## Simple single-node Usage
 
 After building and deploying the application to appropriate environment, the application exposes REST API on
 port 8080. This API can be used to start, query and end the performance test.
@@ -21,7 +27,7 @@ with IntellijIDEA HTTP plugin. Example `curl` usage see below.
 
 ### Assumptions
 - AVRO schema created in schema registry (see `de.enbw.kafka.perftest.service.KafkaRestProxyPubSubService.VALUE_SCHEMA`)
-- topic exists
+- topic exists in the Kafka cluster
 
 ### Example curl usage
 Start test run:
@@ -31,8 +37,8 @@ curl -X POST --location "http://localhost:8080/pub-sub-demo" \
     -H "Content-Type: application/json" \
     -d "{
           \"type\": \"KAFKA_REST_PROXY\",
-          \"minIntervalMs\": 100,
-          \"maxIntervalMs\": 100,
+          \"minBatchIntervalMs\": 100,
+          \"maxBatchIntervalMs\": 100,
           \"minMessagePayloadSizeBytes\": 180000,
           \"maxMessagePayloadSizeBytes\": 180000,
           \"parallelProducers\": 4,
@@ -100,7 +106,7 @@ Response:
 ```
 
 ### Important configuration options that can be set into HTTP payload that starts the run
-- `minIntervalMs` / `maxIntervalMs`: random interval in ms between messages being produced.
+- `minBatchIntervalMs` / `maxBatchIntervalMs`: random interval in ms between messages being produced.
 - `minMessagePayloadSizeBytes` / `maxMessagePayloadSizeBytes`: random interval of the single message size in bytes
   - note that the size is for message, not for the batch (aka HTTP produce request)
 - `parallelProducers`: count of independent concurrent producers
@@ -109,9 +115,9 @@ Response:
 - `kafkaConsumerGroup`: consumer group, should be newly created for each run to avoid messing up results between runs
 - `kafkaConsumerId`: ID of consumer, should be newly created for each run to avoid messing up results between runs
 - `minMessagesPerBatch` / `maxMessagesPerBatch`: number of messages in single HTTP producing request
-- `consumeTimeoutMs`: equivalent parameter to `timeout` parameter of the REST Proxy produce endpoint
+- `consumeTimeoutMs`: parameter used by producers as `timeout` parameter of the REST Proxy produce endpoint
   - https://docs.confluent.io/platform/current/kafka-rest/api.html#get--consumers-(string-group_name)-instances-(string-instance)-records
-- `consumeMaxBytesMs`: equivalent parameter to `max_bytes` of REST proxy
+- `consumeMaxBytesMs`: parameter used by producers as `max_bytes` of REST proxy
   - https://docs.confluent.io/platform/current/kafka-rest/api.html#get--consumers-(string-group_name)-instances-(string-instance)-records
 - `commitInterval`: determines whether to use synchronous or async commits.
   - null -> synchronous commits
@@ -121,13 +127,18 @@ Response:
 More details see class `de.enbw.kafka.perftest.utils.PublishSubscribeConfDto`, the parameters not mentioned
 should not be touched.
 
+## Distributed mode usage
+See `src/main/kotlin/de/enbw/kafka/perftest/distributed/distributedExecutionHelper.kt`
+
+`FIXME`: make this more user friendly and usable
+
 ## Performance test method outline
 
 - number of producers can be configured per run
 - only single consumer supported per run
   - aim: simulate lag between overwhelming number of producers
-  - assumption: consumer can be scaled horizontally
-- offset committing can be configured by the `commitInterval` of the payload
+  - assumption: consumer(s) can be scaled horizontally
+- offset committing can be configured by the `commitInterval` of the run-execution payload
   - `null` / not set -> will commit synchronously, i.e. next poll of consumer will happen after successful commit only
   - ISO Interval (e.g. `PT1M`) -> will commit asynchronously in this interval independent of the polling / consumption
 - each run should create its own new consumer group and consumer with `latest` offset, so that the topic can be and

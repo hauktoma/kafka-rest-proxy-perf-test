@@ -1,4 +1,4 @@
-# Kafka REST Proxy perf tests
+# Kafka REST Proxy performance tests
 
 Helper project to measure performance of Kafka producer-consumer setup using the REST Proxy API of Kafka.
 This tests sets up single consumer and multiple producers and tries to measure duration the whole round-trip

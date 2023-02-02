@@ -204,7 +204,14 @@ data class PublishSubscribeConfDto(
      * If NOT set, the commits are done asynchronously, i.e. consuming loop does not wait for commits to finish.
      * Interval between commits is set as ISO duration, e.g. for 1 minute: "PT1M".
      */
-    val commitInterval: Duration?
+    val commitInterval: Duration?,
+
+    /**
+     * Duration for which the test should run. If set, the task will automatically close itself after
+     * this time. The final statistics however must be gathered from the application logs instead of
+     * HTTP endpoint if this is set.
+     */
+    val runDuration: Duration?
 )
 
 data class PubSubStatsDto(
@@ -252,39 +259,9 @@ data class PubSubTaskAndConf(
     override fun close() {
         stats.taskKillTime = Instant.now()
         stats.publishStats = false // stop gathering new stats
-
         log.info("Going to kill producer job...")
         tryKillRunningTaskOrException(producerJob)
         log.info("Killed producer job...")
-
-        val numberOfAttempts: Long = (timeBuffer / delay)
-
-        log.info("Going to kill consumer job... Time buffer to consume leftover message: $timeBuffer")
-
-        val attemptToConsumeLeftoverMessages: Long? = (0..numberOfAttempts).firstNotNullOfOrNull { attempt ->
-            kotlin.runCatching {
-                // return attempt on which the messages were consumed
-                when (stats.consumedMessages.toInt() >= stats.producedMessages.toInt()) {
-                    true -> attempt // return attempt index on which job was killed
-                    false -> {
-                        log.warn("Waiting for leftover unconsumed messages after ${attempt * delay} ms: " +
-                                "Consumed messages = ${stats.consumedMessages}, Produced Messages = ${stats.producedMessages}")
-                        Thread.sleep(delay)
-                        null// try to consume the messages again
-                    }
-                }
-            }.onFailure { ex ->
-                log.info("Error while trying to consume leftover messages", ex)
-            }.getOrNull()
-        }
-
-        when (attemptToConsumeLeftoverMessages) {
-            null -> log.info("Failed to consume all of the leftover messages: " +
-                    "Consumed messages = ${stats.consumedMessages}, Produced Messages = ${stats.producedMessages}, " +
-                    "Difference = ${stats.producedMessages.toInt() - stats.consumedMessages.toInt()}")
-            else -> log.info("Successfully consumed all of the leftover messages")
-        }
-
         tryKillRunningTaskOrException(consumerJob)
         log.info("Killed consumer job...")
     }
@@ -313,11 +290,6 @@ data class PubSubTaskAndConf(
             !jobToKill.isDisposed -> throw IllegalStateException("Job not killed, even though attempts reached.")
             else -> log.info("Killed task in $attemptThatKilledTaskOrNull attempt.")
         }
-    }
-
-    companion object {
-        const val timeBuffer: Long = 20_000
-        const val delay: Long = 2_000
     }
 }
 

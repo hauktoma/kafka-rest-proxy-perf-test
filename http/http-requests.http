@@ -10,11 +10,11 @@ Content-Type: application/json
 {
   "mode": "CONSUMER_AND_PRODUCERS",
   "type": "KAFKA_REST_PROXY",
-  "minBatchIntervalMs": 100,
-  "maxBatchIntervalMs": 100,
+  "minBatchIntervalMs": 500,
+  "maxBatchIntervalMs": 500,
   "minMessagePayloadSizeBytes": 180000,
   "maxMessagePayloadSizeBytes": 180000,
-  "parallelProducers": 4,
+  "parallelProducers": 8,
   "gatherLatencies": true,
   "kafkaRestUri": "{{kafka-rest-uri}}",
   "kafkaUserName": "{{kafka-user-name}}",
@@ -27,7 +27,8 @@ Content-Type: application/json
   "maxMessagesPerBatch": 4,
   "consumeTimeoutMs": 10,
   "consumeMaxBytesMs": 5000000,
-  "commitInterval": "PT10S"
+  "commitInterval": "PT10S",
+  "runDuration": "PT1M"
 }
 
 ### stop-pub-sub

@@ -1,11 +1,12 @@
 package de.enbw.kafka.perftest.service
 
-import de.enbw.kafka.perftest.CreateConsumerResponseDTO
+import de.enbw.kafka.perftest.controller.CreateConsumerResponseDTO
 import de.enbw.kafka.perftest.serviceutils.*
 import de.enbw.kafka.perftest.utils.*
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.stereotype.Service
+import org.springframework.web.reactive.function.client.ClientResponse
 import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.reactive.function.client.bodyToMono
 import reactor.core.Disposable
@@ -13,6 +14,7 @@ import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
 import reactor.kotlin.core.publisher.switchIfEmpty
 import reactor.util.function.Tuple2
+import java.lang.Exception
 import java.time.Duration
 import java.time.Instant
 import java.util.*
@@ -249,7 +251,7 @@ class KafkaRestProxyPubSubService(
     private fun produceBatch(
         newConfiguration: PublishSubscribeConfDto,
         orderNumber: String
-    ): Mono<Tuple2<HttpStatus, Unit>> = Mono.delay(
+    ): Mono<Unit> = Mono.delay(
         Duration.ofMillis(
             generateRandom(
                 newConfiguration.minBatchIntervalMs,
@@ -299,30 +301,50 @@ class KafkaRestProxyPubSubService(
             .contentType(MediaType.parseMediaType("application/vnd.kafka.avro.v2+json"))
             .bodyValue(message)
             .exchangeToMono { response ->
-                Mono.zip(
-                    Mono.just(response.statusCode()),
-                    if (response.statusCode().is2xxSuccessful) response.bodyToMono(String::class.java).flatMap {
-                        log.info("Sent message, response code: ${response.statusCode()}")
-                        val latencyMs = Duration.between(
-                            Instant.parse(message.records.first().value.metadata.occurredAt),
-                            Instant.now()
-                        ).toMillis()
-
-                        log.info("=== Order sending result: id=${message.records.first().value.metadata.eventId}, httpStatus=${response.statusCode()} in $latencyMs ===")
-                        if (task?.stats?.publishStats == true) {
-                            task?.stats?.apply {
-                                producedMessages.addAndGet(message.records.size)
-                                if (newConfiguration.gatherLatencies) latenciesProduce.add(latencyMs)
-                            }
-                        }
-                        response.bodyToMono()
-                    }
-                    else response.bodyToMono(String::class.java).flatMap { produceError ->
-                        log.error("Failed to produce message. Status=${response.statusCode()}, errorMessage=${produceError}")
-                        Mono.error(IllegalStateException("Failed to produce message..."))
-                    }
-                )
+                doProcessProduceResponse(response, message, newConfiguration)
+            }.onErrorResume { ex ->
+                // catch and log all errors here so that producing will not stop
+                log.error("Failed to produce message: ${ex.message}", ex)
+                task?.stats?.apply {
+                    failedMessages.incrementAndGet()
+                }
+                // continue with test
+                Mono.just(Unit)
             }
+    }
+
+    private fun doProcessProduceResponse(
+        response: ClientResponse,
+        message: ProduceMessagesInDTO<String>,
+        newConfiguration: PublishSubscribeConfDto
+    ): Mono<Unit> = Mono.zip(
+        Mono.just(response.statusCode()),
+        response.bodyToMono(String::class.java).flatMap { responseString ->
+            if (response.statusCode().is2xxSuccessful) {
+                log.info("Sent message, response code: ${response.statusCode()}")
+                val latencyMs = Duration.between(
+                    Instant.parse(message.records.first().value.metadata.occurredAt),
+                    Instant.now()
+                ).toMillis()
+
+                log.info("=== Order sending result: id=${message.records.first().value.metadata.eventId}, httpStatus=${response.statusCode()} in $latencyMs ===")
+                if (task?.stats?.publishStats == true) {
+                    task?.stats?.apply {
+                        producedMessages.addAndGet(message.records.size)
+                        if (newConfiguration.gatherLatencies) latenciesProduce.add(latencyMs)
+                    }
+                }
+                Mono.just(Unit)
+            } else {
+                // just return exception on invalid status, the error metrics will be handled downstream
+                Mono.error(Exception("Failed to produce message. Status=${response.statusCode()}, errorMessage=${responseString}"))
+            }
+        }
+    ).map {
+        // Unit
+    }.switchIfEmpty {
+        // empty mono in producing is also an error, return error for downstream processing
+        Mono.error(Exception("Failed to produce message: unexpected empty response. Status=${response.statusCode()}."))
     }
 
     companion object {

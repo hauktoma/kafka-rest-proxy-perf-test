@@ -1,11 +1,16 @@
 /**
  * This script allows for distributed execution of the benchmark runs on multiple machines.
- * Outline:
- * - set of URLs/ports is provided where the benchmark application is deployed and its API available to this script
- * - set of run scenarios is defined below
- * - scenarios are sequentially ran, for each run, single consumer is randomly picked from available apps, rest
- * will take role of producers
- * - after all runs are executed, MD table is generated with results
+ *
+ * How to use:
+ * - deploy the application in at least 2 instances, make its port 8080 accessible via HTTP
+ * - configure the `DistributedSetup` class below
+ * - run the main method of this script
+ *
+ * Method outline:
+ * - the `DistributedSetup` contains configuration such as test duration, URL of the benchmark instances,
+ * run configurations (parallelism, size of messages etc) -> this will be executed in sequence
+ * - for each run execution one consumer and multiple producers are chosen randomly from instances
+ * - at the end of the execution MD table is printed into log with results
  *
  * See DistributedSetup for configuration below.
  *
@@ -13,15 +18,16 @@
  */
 package de.enbw.kafka.perftest.distributed
 
-import de.enbw.kafka.perftest.utils.*
+import de.enbw.kafka.perftest.utils.ExecutionMode
+import de.enbw.kafka.perftest.utils.PubSubType
+import de.enbw.kafka.perftest.utils.PublishSubscribeConfDto
+import de.enbw.kafka.perftest.utils.logger
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
 import reactor.kotlin.core.publisher.switchIfEmpty
 import java.time.Duration
 import java.time.Instant
 import java.util.*
-import kotlin.reflect.full.memberProperties
-import kotlin.reflect.full.primaryConstructor
 
 private val log by logger {}
 
@@ -31,18 +37,16 @@ private val log by logger {}
 object DistributedSetup {
 
     /**
-     * Determines duration of run.
+     * Determines duration of each run.
      */
-    val testDuration: Duration = Duration.ofSeconds(30)
+    val testDuration: Duration = Duration.ofSeconds(60)
 
     /**
      * Set of URL/ports with deployed benchmark application. Example value: 'http://111.111.111.111:8080'.
+     * There must be at least two instances here so that we have distinct producers and consumers.
      */
-    val machineUrls = setOf(
-        "http://18.196.2.251:8080",
-        "http://18.195.203.225:8080",
-        "http://3.121.186.36:8080",
-        "http://18.159.124.30:8080",
+    val machineUrls: Set<String> = setOf(
+        TODO()
     )
 
     /**
@@ -72,32 +76,33 @@ object DistributedSetup {
         maxMessagesPerBatch = 1,
         consumeTimeoutMs = 10,
         consumeMaxBytesMs = 10000000, // 10 MB
-        commitInterval = Duration.ofSeconds(10)
+        commitInterval = Duration.ofSeconds(10),
+        runDuration = null, // do not set duration here test is terminated by DELETE endpoint
     )
 
-    /**
-     * Runs derived from [template] that will be executed.
-     */
-    val runs = listOf(
-        template.copy(parallelProducers = 2),
-//        template.copy(parallelProducers = 4),
-//        template.copy(parallelProducers = 8),
-        template.copy(parallelProducers = 16),
-//        template.copy(parallelProducers = 2, minBatchIntervalMs = 4, maxMessagesPerBatch = 4),
-//        template.copy(parallelProducers = 4, minBatchIntervalMs = 4, maxMessagesPerBatch = 4),
-//        template.copy(parallelProducers = 8, minBatchIntervalMs = 4, maxMessagesPerBatch = 4),
-//        template.copy(parallelProducers = 16, minBatchIntervalMs = 4, maxMessagesPerBatch = 4),
-//        template.copy(parallelProducers = 2, minMessagePayloadSizeBytes = 480000, maxMessagePayloadSizeBytes = 480000),
-//        template.copy(parallelProducers = 4, minMessagePayloadSizeBytes = 480000, maxMessagePayloadSizeBytes = 480000),
-//        template.copy(parallelProducers = 8, minMessagePayloadSizeBytes = 480000, maxMessagePayloadSizeBytes = 480000),
-//        template.copy(parallelProducers = 16, minMessagePayloadSizeBytes = 480000, maxMessagePayloadSizeBytes = 480000),
-    )
+    val runs: List<PublishSubscribeConfDto> = listOf(1, 2, 4, 8, 16).map { parallelProducers ->
+        listOf(1, 2, 4).map { messagesPerBatch ->
+            listOf(200000, 480000).map { messageSizesBytes ->
+                listOf(500, 250, 100).map { batchInterval ->
+                    template.copy(
+                        parallelProducers = parallelProducers,
+                        minMessagesPerBatch = messagesPerBatch,
+                        maxMessagesPerBatch = messagesPerBatch,
+                        minBatchIntervalMs = batchInterval,
+                        maxBatchIntervalMs = batchInterval,
+                        minMessagePayloadSizeBytes = messageSizesBytes,
+                        maxMessagePayloadSizeBytes = messageSizesBytes
+                    )
+                }
+            }.flatten()
+        }.flatten()
+    }.flatten()
 }
 
-private fun doExecuteRun(index: Int, conf: PublishSubscribeConfDto): DistributedRunResultsDto = try {
-    if (index > 0) {
+private fun doExecuteRun(runId: Int, conf: PublishSubscribeConfDto): DistributedRunResultsDto = try {
+    if (runId > 1) { // index from 1
         log.warn("There was a run before this one, sleeping a bit to give the setup a breather...")
-        Mono.delay(Duration.ofSeconds(60)).block()
+        Mono.delay(Duration.ofSeconds(20)).block()
         log.info("Continuing after break...")
     }
 
@@ -106,7 +111,7 @@ private fun doExecuteRun(index: Int, conf: PublishSubscribeConfDto): Distributed
     stopAllOrThrowException().block(Duration.ofSeconds(30))
     checkMachinesOk()
 
-    log.info("Executing run $index with conf $conf")
+    log.info("Executing run $runId with conf $conf")
 
     // pick the consumer node randomly and mark rest as producers
     val consumerNode = DistributedSetup.machineUrls.random()
@@ -157,70 +162,46 @@ private fun doExecuteRun(index: Int, conf: PublishSubscribeConfDto): Distributed
         log.info("Evaluating run...")
         val (consumerResult, endTime) = it.t2
         evaluateRun(
-            runId = index,
+            runId = runId,
             conf = conf,
             consumerStats = consumerResult,
             producerStats = it.t1,
             approximateRuntime = Duration.between(timerStart, endTime)
         ).also { runResults ->
-            log.info("Run $index evaluated, results: $runResults")
+            log.info("Run $runId evaluated, results: $runResults")
         }
     }.block(Duration.ofSeconds(30))!!
 } catch (ex: Exception) {
-    log.error("Failed to execute run $index: ${ex.message}", ex)
+    log.error("Failed to execute run $runId: ${ex.message}", ex)
     throw ex
 } finally {
     // no matter what happens in the run, kill everything after
-    log.info("Final cleanup of run $index...")
+    log.info("Final cleanup of run $runId...")
     stopAllOrThrowException().block(Duration.ofSeconds(30))
-    log.info("Run $index cleaned up.")
+    log.info("Run $runId cleaned up.")
 }
-
-fun stopAllOrThrowException(): Mono<MutableList<Throwable>> = Flux.fromIterable(
-    DistributedSetup.machineUrls
-).flatMap { machineUrl ->
-    stopTaskOnMachine(machineUrl).flatMap {
-        Mono.empty<Throwable>()
-    }.doOnError { error ->
-        log.error("Failed to kill task on machine $machineUrl", error)
-    }.onErrorResume { error ->
-        Mono.just(error)
-    }
-}.collectList().doOnNext { maybeErrors ->
-    when {
-        maybeErrors.isNullOrEmpty() -> log.info("Deleted all, no errors...")
-        else -> throw IllegalStateException("Failed to perform clean termination of tasks, there were ${maybeErrors.size} errors.")
-    }
-}
-
 
 fun doExecuteRuns() {
     // check we have proper configuration
-    require(DistributedSetup.machineUrls.size >= 2) {
+    require(DistributedSetup.machineUrls.size > 1) {
         "At least two distinct machines must be provided for distributed run."
     }
 
     // check that machines are available
     checkMachinesOk()
 
-    // extract properties names, this is a hack that allows to keep the sane order as defined in class
-    // for purposes of rendering MD table...
-    val properties = DistributedRunResultsDto::class.primaryConstructor!!.parameters
-        .map { it.name }
-        .map { propertyName ->
-            DistributedRunResultsDto::class.memberProperties.find { it.name == propertyName }!!
-        }
+    log.info("All checks passed, will execute total of ${DistributedSetup.runs.size} runs...")
 
     DistributedSetup.runs.mapIndexed { index, conf ->
-        doExecuteRun(index, conf)
-    }.also {
-        // print header for the result table
-        val header = properties.joinToString("|") { it.name }
-        println("|$header|")
-    }.forEach { resultRow ->
-        // print each row of results
-        val row = properties.joinToString("|") { it.get(resultRow).toString() }
-        println("|$row|")
+        val runId = index + 1
+        val runString = "${runId}/${DistributedSetup.runs.size}"
+
+        log.info("Executing run [$runString]")
+        doExecuteRun(runId, conf).also {
+            log.info("Run [$runString] executed")
+        }
+    }.also { results ->
+        createReports(results)
     }
 }
 
@@ -230,7 +211,17 @@ private fun checkMachinesOk() {
     }
 }
 
+/**
+ * Execute this, wait for results and then take the MD table and format it somewhere.
+ *
+ * Double check that your tasks were killed properly!
+ */
 fun main() {
-    // stopAllOrThrowException().block(Duration.ofSeconds(30))
+    stopAllOrThrowException().block(Duration.ofSeconds(30))
+
+    // debug print runs, outside logger to save space
+    DistributedSetup.runs.forEach { conf ->
+        println(conf)
+    }
     doExecuteRuns()
 }

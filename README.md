@@ -138,6 +138,8 @@ See `src/main/kotlin/de/enbw/kafka/perftest/distributed/distributedExecutionHelp
 - only single consumer supported per run
   - aim: simulate lag between overwhelming number of producers
   - assumption: consumer(s) can be scaled horizontally
+- new instance of consumer and new consumer group created for each run
+  - therefore multiple subsequent runs on single topic do not mess up the results
 - offset committing can be configured by the `commitInterval` of the run-execution payload
   - `null` / not set -> will commit synchronously, i.e. next poll of consumer will happen after successful commit only
   - ISO Interval (e.g. `PT1M`) -> will commit asynchronously in this interval independent of the polling / consumption

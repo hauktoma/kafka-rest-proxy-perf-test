@@ -14,6 +14,13 @@ repositories {
     mavenCentral()
 }
 
+// specify class explicitely so that main method of application does not clash
+// with main method of the distributed runner
+// see https://docs.spring.io/spring-boot/docs/current/gradle-plugin/reference/htmlsingle/#packaging-executable.configuring.main-class
+tasks.named<org.springframework.boot.gradle.tasks.bundling.BootJar>("bootJar") {
+    mainClass.set("de.enbw.kafka.perftest.KafkaRestProxyPerfTestApplicationKt")
+}
+
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-webflux")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")

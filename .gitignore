@@ -39,3 +39,6 @@ out/
 ### private files for development ###
 .private*
 /http/http-client.private.env.json
+
+### Temporary dir for e.g. temporary reports
+tmp/

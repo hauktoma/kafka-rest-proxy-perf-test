@@ -1,12 +1,14 @@
-package de.enbw.kafka.perftest
+package de.enbw.kafka.perftest.controller
 
 import com.fasterxml.jackson.annotation.JsonProperty
 import de.enbw.kafka.perftest.service.KafkaRestProxyPubSubService
 import de.enbw.kafka.perftest.utils.*
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.web.bind.annotation.*
+import reactor.core.Disposable
 import reactor.core.publisher.Mono
 import java.time.Instant
+import java.util.concurrent.atomic.AtomicInteger
 
 private val log by logger {}
 
@@ -15,6 +17,13 @@ class PubSubController(
     val kafkaRestProxyService: KafkaRestProxyPubSubService,
 ) {
     private var task: PubSubTaskAndConf? = null
+
+    /**
+     * Task that is responsible for killing the main [task] after period of time. Intentionally
+     * here and not as part of [PubSubTaskAndConf] so that the [PubSubTaskAndConf.close] can
+     * be used for this task.
+     */
+    private var terminationTask: Disposable? = null
 
     @Scheduled(fixedDelay = 10_000)
     fun printStatsTask() {
@@ -32,7 +41,7 @@ class PubSubController(
     fun startPubSub(
         @RequestBody(required = true) newConfiguration: PublishSubscribeConfDto
     ): Mono<PublishSubscribeConfDto> = Mono.fromCallable {
-        log.info("Acquired request to start pub-sub task with configuration: $newConfiguration")
+        log.info("Acquired request to start pub-sub task with configuration:\n${newConfiguration.toPrettyJsonString()}")
 
         if (newConfiguration.minBatchIntervalMs > newConfiguration.maxBatchIntervalMs)
             throw IllegalArgumentException("Invalid minBatchIntervalMs or maxBatchIntervalMs")
@@ -53,6 +62,21 @@ class PubSubController(
             PubSubType.KAFKA_REST_PROXY -> kafkaRestProxyService.doStartPubSub(newConfiguration)
         }
 
+        // the time limit was requested -> schedule job that will kill the task
+        if (newConfiguration.runDuration != null) {
+            terminationTask = Mono.fromCallable {
+                log.info("Spinning up auto termination task, duration=${newConfiguration.runDuration}")
+            }.delayElement(
+                newConfiguration.runDuration
+            ).flatMap {
+                log.info("Stopping pub-sub by termination task after ${newConfiguration.runDuration}.")
+                stopPubSub()
+            }.subscribe(
+                { log.info("Termination task terminated current run.") },
+                { log.error("Failed to terminate current run.", it) }
+            )
+        }
+
         task = newTask
         task?.stats?.taskStartTime = Instant.now()
         newConfiguration
@@ -61,27 +85,36 @@ class PubSubController(
     @DeleteMapping("/pub-sub-demo")
     fun stopPubSub(): Mono<StatsWrapperDto?> {
         val stats: PubSubStatsDto? = tryKillRunningTaskOrException()
-        log.info("Final stats: $stats")
+        log.info("=== Final stats: $stats")
         return Mono.fromCallable {
-            val maybeResultStats = stats?.let { computeLatencies(it) }
+            val maybeResultStats = stats
+                ?.let { computeLatencies(it) }
+                ?.also { log.info("=== Final results of the run:\n${it.toPrettyJsonString()}") }
             maybeResultStats
         }
     }
 
-    private fun tryKillRunningTaskOrException(): PubSubStatsDto? = when (val taskToKill = task) {
-        null -> {
-            log.info("Nothing to kill...")
-            null
-        }
+    private fun tryKillRunningTaskOrException(): PubSubStatsDto? = try {
+        when (val taskToKill = task) {
+            null -> {
+                log.info("Nothing to kill...")
+                null
+            }
 
-        else -> {
-            log.info("Initiated kill process...")
-            taskToKill.close()
-            val stats: PubSubStatsDto = taskToKill.stats
-            task = null
-            log.info("Process killed...")
-            stats
+            else -> {
+                log.info("Initiated kill process...")
+                taskToKill.close()
+                val stats: PubSubStatsDto = taskToKill.stats
+                task = null
+                log.info("Process killed...")
+                stats
+            }
         }
+    } finally {
+        // quietly dispose of termination task
+        terminationTask?.dispose()
+        terminationTask = null
+        log.info("Termination task disposed of...")
     }
 }
 
